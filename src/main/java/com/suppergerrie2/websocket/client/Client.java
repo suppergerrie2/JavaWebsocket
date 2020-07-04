@@ -1,5 +1,6 @@
 package com.suppergerrie2.websocket.client;
 
+import com.suppergerrie2.websocket.common.Constants;
 import com.suppergerrie2.websocket.common.Helpers;
 import com.suppergerrie2.websocket.common.State;
 import com.suppergerrie2.websocket.common.WebsocketURLStreamHandlerFactory;
@@ -40,8 +41,10 @@ public class Client {
     private byte[] randomBytes;
     private Message currentMessage;
 
-    private List<Consumer<Message>> messageHandlers = new ArrayList<>();
+    private HashMap<String, List<Consumer<Message>>> messageHandlers = new HashMap<>();
     private List<Consumer<Client>> closeHandlers = new ArrayList<>();
+
+    private String[] activeProtocols;
 
     public Client(URL host) throws ProtocolException {
         if (!(host.getProtocol().equals("ws") || host.getProtocol().equals("wss"))) {
@@ -52,8 +55,12 @@ public class Client {
         readHandler = new ReadHandler(this);
     }
 
-    public void registerMessageHandler(Consumer<Message> handler) {
-        messageHandlers.add(handler);
+    public void registerMessageHandler(String protocol, Consumer<Message> handler) {
+        if (!messageHandlers.containsKey(protocol)) {
+            messageHandlers.put(protocol, new ArrayList<>());
+        }
+
+        messageHandlers.get(protocol).add(handler);
     }
 
     public void registerCloseHandler(Consumer<Client> handler) {
@@ -93,7 +100,6 @@ public class Client {
         }
 
         startReading();
-        System.out.println(System.currentTimeMillis());
         doInitializeWebsocketUpgrade();
     }
 
@@ -103,17 +109,18 @@ public class Client {
                 String.format("GET %s HTTP/1.1", host.toExternalForm()),
                 "Connection: Upgrade",
                 String.format("Sec-WebSocket-Key: %s", getNonce()),
-                String.format("Host: %s:%s", host.getHost(), host.getPort()),
+                String.format("Host: %s:%s", host.getHost(),
+                              host.getPort() == -1 ? host.getDefaultPort() : host.getPort()),
                 "Upgrade: websocket",
-                "Sec-WebSocket-Version: 13"
+                "Sec-WebSocket-Version: 13",
+                String.format("Sec-WebSocket-Protocol: %s", String.join(",", messageHandlers.keySet()))
         };
 
         String header = String.join("\r\n", headers) + "\r\n\r\n";
 
         byte[] bytes = header.getBytes(StandardCharsets.UTF_8);
 
-        System.out.printf("Wrote %d bytes out of %d%n",
-                          channel.write(ByteBuffer.wrap(bytes)).get(), bytes.length);
+          channel.write(ByteBuffer.wrap(bytes));
     }
 
     /**
@@ -163,11 +170,16 @@ public class Client {
 
     void setState(State state) {
         this.state = state;
-        System.out.println("Setting state to " + state);
 
         if (state == State.CLOSED) {
             for (Consumer<Client> handler : closeHandlers) {
                 handler.accept(this);
+            }
+
+            try {
+                channel.close();
+            } catch (IOException e) {
+                e.printStackTrace();
             }
         }
     }
@@ -221,6 +233,11 @@ public class Client {
         if (message.isControlMessage()) {
             byte[] payloadData = message.getPayloadData();
 
+            if(payloadData.length > 125 || message.isFragmented()) {
+                this.stop(Constants.StatusCode.PROTOCOL_ERROR);
+                return;
+            }
+
             switch (message.getMessageType()) {
                 case CONNECTION_CLOSE:
                     //If the client is not closing already and it receives a connection_close message, send one back
@@ -231,10 +248,13 @@ public class Client {
                                     String.format("Received close connection message with status code %s",
                                                   (((payloadData[0] & 0xFF) << 8) | (payloadData[1] & 0xFF))));
 
+                            if(payloadData.length > 2) System.out.print("Close reason from other side: ");
+
                             for (int i = 2; i < payloadData.length; i++) {
                                 System.out.print((char) payloadData[i]);
                             }
-                            System.out.print(System.lineSeparator());
+
+                            if(payloadData.length > 2) System.out.print(System.lineSeparator());
                         } else {
                             System.out.println("Received close connection message without reason");
                         }
@@ -265,9 +285,11 @@ public class Client {
             }
 
         } else {
-            //Pass it to the user
-            for (Consumer<Message> h : messageHandlers) {
-                h.accept(message);
+            for (String protocol : activeProtocols) {
+                //Pass it to the user
+                for (Consumer<Message> h : messageHandlers.get(protocol)) {
+                    h.accept(message);
+                }
             }
         }
     }
@@ -362,6 +384,20 @@ public class Client {
                 throw new IllegalStateException("Header had an invalid value");
             }
 
+            String protocols = headerFields.getOrDefault("Sec-WebSocket-Protocol", "");
+            String[] protocolArray = Arrays.stream(protocols.split(",")).map(String::trim).toArray(String[]::new);
+
+            for (String protocol : protocolArray) {
+                if (protocol.length() == 0) continue;
+
+                if (!messageHandlers.containsKey(protocol)) {
+                    throw new IllegalStateException(
+                            String.format("Server requested protocol %s which client cannot handle", protocol));
+                }
+            }
+
+            activeProtocols = protocolArray;
+
             //handshake is done, state is open now
             setState(State.OPEN);
         } else {
@@ -377,9 +413,30 @@ public class Client {
      * @throws IllegalStateException when state is not {@link State#OPEN}
      */
     public void stop() {
+        stop(1000, false);
+    }
+
+    public void stop(Constants.StatusCode statusCode) {
+        stop(statusCode.value, statusCode == Constants.StatusCode.PROTOCOL_ERROR);
+    }
+
+    public void stop(int statusCode, boolean forceStop) {
         if (getState() == State.OPEN) {
             setState(State.CLOSING);
-            sendMessage(new Message(Fragment.withData(Fragment.OpCode.CONNECTION_CLOSE, new byte[0]).get(0)));
+            sendMessage(new Message(Fragment.withData(Fragment.OpCode.CONNECTION_CLOSE, new byte[] {
+                    (byte) ((statusCode >> 8) & 0xFF),
+                    (byte) ((statusCode ) & 0xFF)
+            }).get(0)));
+
+            if(forceStop) {
+                try {
+                    channel.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+
+                setState(State.CLOSED);
+            }
         } else {
             throw new IllegalStateException("Cannot stop client that hasn't started yet");
         }

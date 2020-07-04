@@ -90,8 +90,7 @@ public class ReadHandler implements CompletionHandler<Integer, ByteBuffer> {
         }
 
         //As long as the client is connected keep reading
-        if (client.isConnected()) {
-
+        if (client.getState() == State.OPEN) {
             client.startReading();
         } else {
             System.out.println("Closing reader!");

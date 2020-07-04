@@ -14,12 +14,13 @@ import java.util.concurrent.ExecutionException;
 
 class ClientTest {
 
+    boolean receivedMessage;
     @Test
     void echoTextTest() throws IOException, InterruptedException, ExecutionException, NoSuchAlgorithmException {
         //Create the string to send
         StringBuilder s = new StringBuilder();
         s.append("START");
-        for (int i = 0; i < 65535 * 4; i++) {
+        for (int i = 0; i < 1000 * 4; i++) {
             s.append(i % 10);
         }
         s.append("END");
@@ -27,10 +28,13 @@ class ClientTest {
 
         System.out.println("Connecting...");
 
-        Client client = new Client(new URL("ws://localhost:9001"));
+        Client client = new Client(new URL("ws://echo.websocket.org/"));
+        receivedMessage = false;
 
-        client.registerMessageHandler(message -> {
+        client.registerMessageHandler("", message -> {
 
+            receivedMessage = true;
+            System.out.println("Received message closing client.");
             client.stop();
 
             Assertions.assertEquals(message.getMessageType(), Fragment.OpCode.TEXT_FRAME);
@@ -59,13 +63,14 @@ class ClientTest {
 
         //Keep program running as long as client is connected
         while (client.isConnected()) Thread.sleep(10);
+        Assertions.assertTrue(receivedMessage, "No message received");
         System.out.println("Client disconnected! bye bye!");
     }
 
     @Test
     void echoBinaryTest() throws IOException, InterruptedException, ExecutionException, NoSuchAlgorithmException {
         //Create the string to send
-        final byte[] toSend = new byte[65535 * 4];
+        final byte[] toSend = new byte[1000 * 4];
 
         for (int i = 0; i < toSend.length; i++) {
             toSend[i] = (byte) i;
@@ -73,10 +78,12 @@ class ClientTest {
 
         System.out.println("Connecting...");
 
-        Client client = new Client(new URL("ws://localhost:9001"));
+        Client client = new Client(new URL("ws://echo.websocket.org/"));
 
-        client.registerMessageHandler(message -> {
+        receivedMessage = false;
+        client.registerMessageHandler("", message -> {
 
+            receivedMessage = true;
             Assertions.assertEquals(message.getMessageType(), Fragment.OpCode.BINARY_FRAME);
 
             switch (message.getMessageType()) {
@@ -104,6 +111,7 @@ class ClientTest {
 
         //Keep program running as long as client is connected
         while (client.isConnected()) Thread.sleep(10);
+        Assertions.assertTrue(receivedMessage, "Never received a message");
         System.out.println("Client disconnected! bye bye!");
     }
 }

@@ -15,6 +15,7 @@ public class Fragment {
 
     //Random to generate a nonce
     private static SecureRandom random = new SecureRandom();
+
     final OpCode opCode;
     final byte[] payloadData;
     private final boolean rsv1;

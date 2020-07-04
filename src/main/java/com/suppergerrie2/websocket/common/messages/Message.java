@@ -154,4 +154,7 @@ public class Message {
         return "Empty message";
     }
 
+    public boolean isFragmented() {
+        return fragments.size() > 1;
+    }
 }
