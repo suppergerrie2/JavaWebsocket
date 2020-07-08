@@ -28,12 +28,12 @@ public class AutobahnTestSuite {
             System.out.printf("Received %d case counts%n", caseCounts);
         }));
 
-        client.start();
-
         client.registerCloseHandler((c) -> {
             System.out.println("Finished receiving case counts");
             startTesting();
         });
+
+        client.start();
 
         while (running) Thread.sleep(10);
     }

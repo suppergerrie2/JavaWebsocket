@@ -20,7 +20,7 @@ class ClientTest {
         //Create the string to send
         StringBuilder s = new StringBuilder();
         s.append("START");
-        for (int i = 0; i < 1000 * 4; i++) {
+        for (int i = 0; i <  1000*4; i++) {
             s.append(i % 10);
         }
         s.append("END");
@@ -60,6 +60,7 @@ class ClientTest {
 
         //Send it
         client.send(toSend);
+        System.out.println("Send message");
 
         //Keep program running as long as client is connected
         while (client.isConnected()) Thread.sleep(10);
@@ -70,7 +71,7 @@ class ClientTest {
     @Test
     void echoBinaryTest() throws IOException, InterruptedException, ExecutionException, NoSuchAlgorithmException {
         //Create the string to send
-        final byte[] toSend = new byte[1000 * 4];
+        final byte[] toSend = new byte[16384*4];
 
         for (int i = 0; i < toSend.length; i++) {
             toSend[i] = (byte) i;

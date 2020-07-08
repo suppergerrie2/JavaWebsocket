@@ -1,5 +1,7 @@
 package com.suppergerrie2.websocket.common.messages;
 
+import com.suppergerrie2.websocket.ProtocolErrorException;
+
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -14,10 +16,11 @@ public class Message {
      * This fragment is the first fragment in the message and will thus also determine the type.
      *
      * @param fragment The first fragment of this message. Cannot be a {@link com.suppergerrie2.websocket.common.messages.Fragment.OpCode#CONTINUATION} frame
+     * @throws ProtocolErrorException When the frame is a {@link com.suppergerrie2.websocket.common.messages.Fragment.OpCode#CONTINUATION} frame.
      */
-    public Message(Fragment fragment) {
+    public Message(Fragment fragment) throws ProtocolErrorException {
         if (fragment.opCode == Fragment.OpCode.CONTINUATION) {
-            throw new IllegalArgumentException("First fragment cannot be a continuation frame!");
+            throw new ProtocolErrorException("First fragment cannot be a continuation frame!");
         }
         fragments.add(fragment);
     }
@@ -62,10 +65,11 @@ public class Message {
      * This cannot be done when the first fragment is a control message and the opcode has to be {@link com.suppergerrie2.websocket.common.messages.Fragment.OpCode#CONTINUATION}
      *
      * @param fragment The fragment to add to this message
+     * @throws ProtocolErrorException When the message already has atleast 1 fragment and this fragment is not a {@link com.suppergerrie2.websocket.common.messages.Fragment.OpCode#CONTINUATION} fragment or this message is a control message.
      */
-    public void addFragment(Fragment fragment) {
+    public void addFragment(Fragment fragment) throws ProtocolErrorException {
         if (isControlMessage() || fragments.size() > 0 && fragment.opCode != Fragment.OpCode.CONTINUATION) {
-            throw new IllegalArgumentException(String.format("Fragment cannot be added because %s",
+            throw new ProtocolErrorException(String.format("Fragment cannot be added because %s",
                                                              isControlMessage() ? "message is a control message" : "frame is not continuation"));
         }
 
@@ -155,6 +159,6 @@ public class Message {
     }
 
     public boolean isFragmented() {
-        return fragments.size() > 1;
+        return fragments.size() > 1 || (fragments.size() > 0 && !fragments.get(0).fin);
     }
 }

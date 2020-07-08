@@ -1,30 +1,19 @@
 package com.suppergerrie2.websocket.client;
 
+import com.suppergerrie2.websocket.ProtocolErrorException;
 import com.suppergerrie2.websocket.common.Constants;
 import com.suppergerrie2.websocket.common.Helpers;
 import com.suppergerrie2.websocket.common.State;
 import com.suppergerrie2.websocket.common.WebsocketURLStreamHandlerFactory;
 import com.suppergerrie2.websocket.common.messages.Fragment;
 import com.suppergerrie2.websocket.common.messages.Message;
-import tlschannel.ClientTlsChannel;
-import tlschannel.TlsChannel;
-import tlschannel.async.AsynchronousTlsChannel;
-import tlschannel.async.AsynchronousTlsChannelGroup;
 
-import javax.net.ssl.SSLContext;
 import java.io.IOException;
-import java.net.InetSocketAddress;
 import java.net.ProtocolException;
+import java.net.Socket;
 import java.net.URL;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.channels.AsynchronousByteChannel;
-import java.nio.channels.AsynchronousSocketChannel;
-import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
-import java.security.NoSuchAlgorithmException;
 import java.util.*;
-import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
 
 public class Client {
@@ -34,12 +23,9 @@ public class Client {
     }
 
     private final URL host;
-    private final ReadHandler readHandler;
-
-    private AsynchronousByteChannel channel;
+    private Socket socket;
     private State state = State.CLOSED;
     private byte[] randomBytes;
-    private Message currentMessage;
 
     private HashMap<String, List<Consumer<Message>>> messageHandlers = new HashMap<>();
     private List<Consumer<Client>> closeHandlers = new ArrayList<>();
@@ -52,7 +38,6 @@ public class Client {
         }
 
         this.host = host;
-        readHandler = new ReadHandler(this);
     }
 
     public void registerMessageHandler(String protocol, Consumer<Message> handler) {
@@ -67,46 +52,42 @@ public class Client {
         closeHandlers.add(handler);
     }
 
-    public void start() throws IOException, NoSuchAlgorithmException, ExecutionException, InterruptedException {
+    public void start() throws IOException {
 
         int port = host.getPort();
         if (port == -1) {
             port = host.getDefaultPort();
         }
-        InetSocketAddress address = new InetSocketAddress(host.getHost(), port);
 
         //If we use secure websocket create a SSL channel
         if (host.getProtocol().equals("wss")) {
-            SocketChannel rawChannel = SocketChannel.open();
-
-            rawChannel.connect(address);
-
-            rawChannel.configureBlocking(false);
-
-            AsynchronousTlsChannelGroup channelGroup = new AsynchronousTlsChannelGroup();
-
-            SSLContext sc = SSLContext.getDefault();
-
-            TlsChannel tlsChannel = ClientTlsChannel.newBuilder(rawChannel, sc)
-                                                    .build();
-
-            channel = new AsynchronousTlsChannel(channelGroup, tlsChannel, rawChannel);
+//            SocketChannel rawChannel = SocketChannel.open();
+//
+//            rawChannel.connect(address);
+//
+//            rawChannel.configureBlocking(false);
+//
+//            AsynchronousTlsChannelGroup channelGroup = new AsynchronousTlsChannelGroup();
+//
+//            SSLContext sc = SSLContext.getDefault();
+//
+//            TlsChannel tlsChannel = ClientTlsChannel.newBuilder(rawChannel, sc)
+//                                                    .build();
+//
+//            channel = new AsynchronousTlsChannel(channelGroup, tlsChannel, rawChannel);
+            throw new UnsupportedOperationException("wss is currently not supported");
         } else {
-            AsynchronousSocketChannel channel = AsynchronousSocketChannel.open();
-
-            channel.connect(address).get();
-
-            this.channel = channel;
+            socket = new Socket(host.getHost(), port);
         }
 
         startReading();
         doInitializeWebsocketUpgrade();
     }
 
-    private void doInitializeWebsocketUpgrade() throws ExecutionException, InterruptedException {
+    private void doInitializeWebsocketUpgrade() throws IOException {
         setState(State.HANDSHAKE);
         String[] headers = new String[]{
-                String.format("GET %s HTTP/1.1", host.toExternalForm()),
+                String.format("GET %s HTTP/1.1", host.toExternalForm()), //TODO: Fix port being added twice.
                 "Connection: Upgrade",
                 String.format("Sec-WebSocket-Key: %s", getNonce()),
                 String.format("Host: %s:%s", host.getHost(),
@@ -120,7 +101,7 @@ public class Client {
 
         byte[] bytes = header.getBytes(StandardCharsets.UTF_8);
 
-          channel.write(ByteBuffer.wrap(bytes));
+        socket.getOutputStream().write(bytes);
     }
 
     /**
@@ -138,14 +119,15 @@ public class Client {
         return Base64.getEncoder().encodeToString(randomBytes);
     }
 
-    void startReading() {
-        startReading(1024);
-    }
+    void startReading() throws IOException {
+        try {
+            new MessageReadThread(this, socket.getInputStream()).start();
+        } catch (IOException e) {
+            e.printStackTrace();
+            stop(Constants.StatusCode.UNEXPECTED_EXCEPTION);
+        }
 
-    @SuppressWarnings({"SameParameterValue", "WeakerAccess"})
-    void startReading(int size) {
-        ByteBuffer buffer = ByteBuffer.allocate(size).order(ByteOrder.LITTLE_ENDIAN);
-        channel.read(buffer, buffer, readHandler);
+        new HTTPReadThread(this, socket.getInputStream()).start();
     }
 
     /**
@@ -177,120 +159,83 @@ public class Client {
             }
 
             try {
-                channel.close();
+                socket.close();
             } catch (IOException e) {
                 e.printStackTrace();
             }
         }
     }
 
-    void handleData(ByteBuffer currentData) {
-        if (getState() == State.CLOSED) {
-            throw new IllegalStateException("cannot receive messages while in closed state");
-        }
+    void handleMessage(final Message message) {
+        try {
+            //If the message is a control message the client needs to handle it
+            if (message.isControlMessage()) {
+                byte[] payloadData = message.getPayloadData();
 
-        if (getState() == State.HANDSHAKE) {
-            //Get the handshake data
-            currentData.flip();
-            byte[] bytes = new byte[currentData.limit()];
-            currentData.get(bytes);
-            currentData.flip();
+                if (payloadData.length > 125 || message.isFragmented()) {
+                    //@formatter:off
+                    throw new ProtocolErrorException(
+                            message.isFragmented() ? "Control message cannot be fragmented. (RFC-6455 Section 5.5.)" :
+                                    String.format("Control message cannot have a payload size of 126 or more but has %d. (RFC-6455 Section 5.5.)", payloadData.length));
+                    //@formatter:on
+                }
 
-            //Convert it into a string
-            String string = new String(bytes, StandardCharsets.UTF_8);
+                switch (message.getMessageType()) {
+                    case CONNECTION_CLOSE:
+                        //If the client is not closing already and it receives a connection_close message, send one back
+                        if (getState() != State.CLOSING) {
+                            //If there is payload data read it to determine the reason
+                            if (payloadData.length >= 2) {
+                                System.out.printf("Received close connection message with status code %s%n",
+                                                  (((payloadData[0] & 0xFF) << 8) | (payloadData[1] & 0xFF)));
 
-            //Parse it!
-            try {
-                parseHandshakeHeader(string);
-            } catch (Exception e) {
-                System.err.println("Failed to parse handshake headers! " + string);
-                e.printStackTrace();
-            }
-        } else {
-            //Deserialize the data into a fragment
-            currentData.flip();
-            Fragment fragment = new Fragment(currentData);
-            currentData.flip();
+                                if (payloadData.length > 2) System.out.print("Close reason from other side: ");
 
-            //If there is not already a message being created create one.
-            if (currentMessage == null) {
-                currentMessage = new Message(fragment);
-            } else {
-                //Else append the fragment to the current message.
-                currentMessage.addFragment(fragment);
-            }
+                                for (int i = 2; i < payloadData.length; i++) {
+                                    System.out.print((char) payloadData[i]);
+                                }
 
-            //If this is a fin fragment handle the message.
-            if (fragment.fin) {
-                handleMessage(currentMessage);
-                currentMessage = null;
-            }
-        }
-    }
-
-    private void handleMessage(final Message message) {
-        //If the message is a control message the client needs to handle it
-        if (message.isControlMessage()) {
-            byte[] payloadData = message.getPayloadData();
-
-            if(payloadData.length > 125 || message.isFragmented()) {
-                this.stop(Constants.StatusCode.PROTOCOL_ERROR);
-                return;
-            }
-
-            switch (message.getMessageType()) {
-                case CONNECTION_CLOSE:
-                    //If the client is not closing already and it receives a connection_close message, send one back
-                    if (getState() != State.CLOSING) {
-                        //If there is payload data read it to determine the reason
-                        if (payloadData.length != 0) {
-                            System.out.println(
-                                    String.format("Received close connection message with status code %s",
-                                                  (((payloadData[0] & 0xFF) << 8) | (payloadData[1] & 0xFF))));
-
-                            if(payloadData.length > 2) System.out.print("Close reason from other side: ");
-
-                            for (int i = 2; i < payloadData.length; i++) {
-                                System.out.print((char) payloadData[i]);
+                                if (payloadData.length > 2) System.out.print(System.lineSeparator());
+                            } else {
+                                System.out.println("Received close connection message without reason");
                             }
 
-                            if(payloadData.length > 2) System.out.print(System.lineSeparator());
+                            //Send a close message back
+                            sendMessage(new Message(Fragment.OpCode.CONNECTION_CLOSE, payloadData));
                         } else {
-                            System.out.println("Received close connection message without reason");
+                            System.out.println("Closed connection!");
                         }
 
-                        //Send a close message back
-                        sendMessage(new Message(Fragment.OpCode.CONNECTION_CLOSE, payloadData));
-                    } else {
-                        System.out.println("Closed connection!");
+                        //Connection has been closed, so update the client's state
+                        setState(State.CLOSED);
+                        break;
+                    case PING:
+
+                        System.out.println("Received ping!");
+                        Message response = new Message(Fragment.OpCode.PONG, payloadData);
+                        sendMessage(response);
+
+                        break;
+                    case PONG:
+                        System.out.println("Received pong!");
+                        break;
+                    default:
+                        throw new UnsupportedOperationException(
+                                String.format("Don't now how to handle unknown control opcode %s",
+                                              message.getMessageType()));
+                }
+
+            } else {
+                for (String protocol : activeProtocols) {
+                    //Pass it to the user
+                    for (Consumer<Message> h : messageHandlers.get(protocol)) {
+                        h.accept(message);
                     }
-
-                    //Connection has been closed, so update the client's state
-                    setState(State.CLOSED);
-                    break;
-                case PING:
-
-                    System.out.println("Received ping!");
-                    Message response = new Message(Fragment.OpCode.PONG, payloadData);
-                    sendMessage(response);
-
-                    break;
-                case PONG:
-                    System.out.println("Received pong!");
-                    break;
-                default:
-                    throw new UnsupportedOperationException(
-                            String.format("Don't now how to handle unknown control opcode %s",
-                                          message.getMessageType()));
-            }
-
-        } else {
-            for (String protocol : activeProtocols) {
-                //Pass it to the user
-                for (Consumer<Message> h : messageHandlers.get(protocol)) {
-                    h.accept(message);
                 }
             }
+        } catch (ProtocolErrorException e) {
+            e.printStackTrace();
+            this.stop(Constants.StatusCode.PROTOCOL_ERROR);
         }
     }
 
@@ -329,18 +274,16 @@ public class Client {
 
         //Send the fragments
         for (Fragment fragment : message.getFragments()) {
-            ByteBuffer buffer = ByteBuffer.wrap(fragment.toBytes());
-
             //TODO: Make it async
             try {
-                channel.write(buffer).get();
-            } catch (InterruptedException | ExecutionException e) {
+                socket.getOutputStream().write(fragment.toBytes());
+            } catch (IOException e) {
                 e.printStackTrace();
             }
         }
     }
 
-    private void parseHandshakeHeader(String headerString) {
+    void parseHandshakeHeader(String headerString) {
         String[] header = headerString.split("\r\n");
         String[] statusLine = header[0].split(" ");
 
@@ -423,14 +366,21 @@ public class Client {
     public void stop(int statusCode, boolean forceStop) {
         if (getState() == State.OPEN) {
             setState(State.CLOSING);
-            sendMessage(new Message(Fragment.withData(Fragment.OpCode.CONNECTION_CLOSE, new byte[] {
-                    (byte) ((statusCode >> 8) & 0xFF),
-                    (byte) ((statusCode ) & 0xFF)
-            }).get(0)));
+            try {
+                sendMessage(new Message(Fragment.withData(Fragment.OpCode.CONNECTION_CLOSE, new byte[]{
+                        (byte) ((statusCode >> 8) & 0xFF),
+                        (byte) ((statusCode) & 0xFF)
+                }).get(0)));
 
-            if(forceStop) {
+            } catch (ProtocolErrorException e) {
+                e.printStackTrace();
+                // We failed while failing, only the force can stop us now.
+                forceStop = true;
+            }
+
+            if (forceStop) {
                 try {
-                    channel.close();
+                    socket.close();
                 } catch (IOException e) {
                     e.printStackTrace();
                 }

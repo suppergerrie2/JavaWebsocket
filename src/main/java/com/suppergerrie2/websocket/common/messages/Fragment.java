@@ -1,5 +1,9 @@
 package com.suppergerrie2.websocket.common.messages;
 
+import com.suppergerrie2.websocket.ExtendedInputStream;
+import com.suppergerrie2.websocket.ProtocolErrorException;
+
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.security.SecureRandom;
 import java.util.ArrayList;
@@ -9,14 +13,14 @@ import java.util.function.Predicate;
 
 public class Fragment {
 
+    //Random to generate a nonce
+    private static final SecureRandom random = new SecureRandom();
+
     //Max size of the payload in a fragment, if the amount of bytes being put in the fragment exceeds this the bytes will be split across fragments
     @SuppressWarnings("WeakerAccess")
     public static int MAX_FRAGMENT_PAYLOAD_SIZE = Integer.MAX_VALUE;
 
-    //Random to generate a nonce
-    private static SecureRandom random = new SecureRandom();
-
-    final OpCode opCode;
+    public final OpCode opCode;
     final byte[] payloadData;
     private final boolean rsv1;
     private final boolean rsv2;
@@ -29,12 +33,12 @@ public class Fragment {
      * Create a fragment from a buffer.
      * It will read from {@link ByteBuffer#position()} and parse the bytes according to <a href="https://tools.ietf.org/html/rfc6455#section-5.2">RFC-6455 section 5.2.</a>
      *
-     * @param buffer The buffer containing the data to create a fragment from.
+     * @param inputStream The buffer containing the data to create a fragment from.
      */
-    public Fragment(ByteBuffer buffer) {
+    public Fragment(ExtendedInputStream inputStream) throws IOException, ProtocolErrorException {
 
         //Get the first byte
-        byte b = buffer.get();
+        byte b = inputStream.readByte();
 
         //Check if the fin, rsv1, rsv2 and rsv3 bits are set and if so set the flag
         fin = (b & 0b10000000) > 0;
@@ -42,13 +46,16 @@ public class Fragment {
         rsv2 = (b & 0b00100000) > 0;
         rsv3 = (b & 0b00010000) > 0;
 
+        //TODO: Allow for extensions
+        if(rsv1 || rsv2 || rsv3) throw new ProtocolErrorException("A reserved bit was set which isn't allowed without extension. (RFC-6455 Section 5.2.)");
+
         //Read the opcode from the last 4 bits
         byte opCode = (byte) (b & 0b00001111);
         //And set the opcode
         this.opCode = OpCode.getOpcode(opCode);
 
         //Get the next byte, which contains the mask flag and the (first) payload length
-        b = buffer.get();
+        b = inputStream.readByte();
         //Mask flag is the most significant bit
         hasMask = (b & 0b10000000) > 0;
 
@@ -57,16 +64,18 @@ public class Fragment {
 
         //If the payloadLength is 126 the next 2 bytes contain a short with the payloadLength
         if (payloadLength == 126) {
-            payloadLength = buffer.getShort() & 0xffff; //Only need the last 2 bytes
+            payloadLength = inputStream.readShort() & 0xffff; //Only need the last 2 bytes
         } else if (payloadLength == 127) { //If the payloadLength is 127 the next 8 bytes contain a long with the payloadLength
-            payloadLength = buffer.getLong();
+            payloadLength = inputStream.readLong();
         }
 
         //If there is a mask read the mask, else just set it to an empty array
         if (hasMask) {
             //mask is 4 bytes
             mask = new byte[4];
-            buffer.get(mask);
+            if (inputStream.read(mask) == -1) {
+                throw new IOException("Reached end of stream");
+            }
         } else {
             mask = new byte[0];
         }
@@ -79,7 +88,9 @@ public class Fragment {
         //Prepare the array.
         payloadData = new byte[(int) payloadLength];
         //And load the data into it
-        buffer.get(payloadData);
+        if (inputStream.read(payloadData) == -1) {
+            throw new IOException("Reached end of stream");
+        }
 
         //If there is a mask unmask the payload data
         if (hasMask) {
