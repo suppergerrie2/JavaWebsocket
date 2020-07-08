@@ -8,6 +8,8 @@ import com.suppergerrie2.websocket.common.WebsocketURLStreamHandlerFactory;
 import com.suppergerrie2.websocket.common.messages.Fragment;
 import com.suppergerrie2.websocket.common.messages.Message;
 
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
 import java.io.IOException;
 import java.net.ProtocolException;
 import java.net.Socket;
@@ -59,23 +61,12 @@ public class Client {
             port = host.getDefaultPort();
         }
 
-        //If we use secure websocket create a SSL channel
+        //If we use secure websocket create a SSL socket
         if (host.getProtocol().equals("wss")) {
-//            SocketChannel rawChannel = SocketChannel.open();
-//
-//            rawChannel.connect(address);
-//
-//            rawChannel.configureBlocking(false);
-//
-//            AsynchronousTlsChannelGroup channelGroup = new AsynchronousTlsChannelGroup();
-//
-//            SSLContext sc = SSLContext.getDefault();
-//
-//            TlsChannel tlsChannel = ClientTlsChannel.newBuilder(rawChannel, sc)
-//                                                    .build();
-//
-//            channel = new AsynchronousTlsChannel(channelGroup, tlsChannel, rawChannel);
-            throw new UnsupportedOperationException("wss is currently not supported");
+            SSLSocketFactory socketFactory = (SSLSocketFactory) SSLSocketFactory.getDefault();
+            SSLSocket sslSocket = (SSLSocket) socketFactory.createSocket(host.getHost(), port);
+            sslSocket.startHandshake();
+            socket = sslSocket;
         } else {
             socket = new Socket(host.getHost(), port);
         }

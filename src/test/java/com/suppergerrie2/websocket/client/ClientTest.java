@@ -28,7 +28,7 @@ class ClientTest {
 
         System.out.println("Connecting...");
 
-        Client client = new Client(new URL("ws://echo.websocket.org/"));
+        Client client = new Client(new URL("wss://echo.websocket.org/"));
         receivedMessage = false;
 
         client.registerMessageHandler("", message -> {
@@ -79,7 +79,7 @@ class ClientTest {
 
         System.out.println("Connecting...");
 
-        Client client = new Client(new URL("ws://echo.websocket.org/"));
+        Client client = new Client(new URL("wss://echo.websocket.org/"));
 
         receivedMessage = false;
         client.registerMessageHandler("", message -> {
