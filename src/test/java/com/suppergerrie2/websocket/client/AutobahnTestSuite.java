@@ -74,7 +74,7 @@ public class AutobahnTestSuite {
             client.start();
             while (client.getState() == State.HANDSHAKE || client.isConnected()) Thread.sleep(10);
 
-        } catch (IOException | NoSuchAlgorithmException | ExecutionException | InterruptedException e) {
+        } catch (IOException | InterruptedException e) {
             e.printStackTrace();
         }
     }
@@ -89,7 +89,7 @@ public class AutobahnTestSuite {
             client.start();
 
             while (client.getState() != State.CLOSED) Thread.sleep(10);
-        } catch (IOException | NoSuchAlgorithmException | ExecutionException | InterruptedException e) {
+        } catch (IOException | InterruptedException e) {
             e.printStackTrace();
         }
     }
