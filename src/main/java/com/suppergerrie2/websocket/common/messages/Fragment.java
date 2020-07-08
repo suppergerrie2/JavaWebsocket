@@ -47,12 +47,19 @@ public class Fragment {
         rsv3 = (b & 0b00010000) > 0;
 
         //TODO: Allow for extensions
-        if(rsv1 || rsv2 || rsv3) throw new ProtocolErrorException("A reserved bit was set which isn't allowed without extension. (RFC-6455 Section 5.2.)");
+        if (rsv1 || rsv2 || rsv3) {
+            throw new ProtocolErrorException(
+                    "A reserved bit was set which isn't allowed without extension. (RFC-6455 Section 5.2.)");
+        }
 
         //Read the opcode from the last 4 bits
         byte opCode = (byte) (b & 0b00001111);
         //And set the opcode
         this.opCode = OpCode.getOpcode(opCode);
+
+        if (this.opCode == OpCode.RESERVED_CONTROL || this.opCode == OpCode.RESERVED_NON_CONTROL || this.opCode == OpCode.UNKNOWN) {
+            throw new ProtocolErrorException(String.format("Invalid OpCode received (%s::%2$02X)", this.opCode.name(), opCode));
+        }
 
         //Get the next byte, which contains the mask flag and the (first) payload length
         b = inputStream.readByte();
@@ -211,13 +218,19 @@ public class Fragment {
         CONTINUATION((Byte) -> (Byte & 0x0F) == 0x0, (byte) 0x0),
         TEXT_FRAME((Byte) -> (Byte & 0x0F) == 0x1, (byte) 0x1),
         BINARY_FRAME((Byte) -> (Byte & 0x0F) == 0x2, (byte) 0x2),
-        NON_CONTROL((Byte) -> {
+        RESERVED_NON_CONTROL((Byte) -> {
             int val = (Byte & 0x0F);
-            return val == 0x3 || val == 0x4 || val == 0x5 || val == 0x6 || val == 0x7 || val == 0xB || val == 0xC || val == 0xE || val == 0xF;
+            return val == 0x3 || val == 0x4 || val == 0x5 || val == 0x6 || val == 0x7;
         }, (byte) 0x3),
         CONNECTION_CLOSE((Byte) -> (Byte & 0x0F) == 0x8, (byte) 0x8, true),
         PING((Byte) -> (Byte & 0x0F) == 0x9, (byte) 0x9, true),
-        PONG((Byte) -> (Byte & 0x0F) == 0xA, (byte) 0xA, true);
+        PONG((Byte) -> (Byte & 0x0F) == 0xA, (byte) 0xA, true),
+        RESERVED_CONTROL((Byte) -> {
+            int val = (Byte & 0x0F);
+            return val == 0xB || val == 0xC || val == 0xD || val == 0xE || val == 0xF;
+        }, (byte) 0xB),
+        UNKNOWN((Byte) -> false, (byte) 0xFF);
+
 
         public final byte bits;
         public final boolean isControlOpCode;
@@ -237,7 +250,7 @@ public class Fragment {
             for (OpCode value : OpCode.values()) {
                 if (value.isOpCodePredicate.test(b)) return value;
             }
-            return OpCode.NON_CONTROL;
+            return OpCode.UNKNOWN;
         }
     }
 
