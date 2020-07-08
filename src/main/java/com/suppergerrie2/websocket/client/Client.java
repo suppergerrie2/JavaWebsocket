@@ -157,6 +157,43 @@ public class Client {
         }
     }
 
+    void handleCloseMessage(final Message message) throws ProtocolErrorException {
+        byte[] payloadData = message.getPayloadData();
+
+        //If the client is not closing already and it receives a connection_close message, send one back
+        if (getState() != State.CLOSING) {
+            Constants.StatusCode statusCode = Constants.StatusCode.EXPECTS_STATUS_CODE;
+            String closeReason = "";
+
+            //If there is payload data read it to determine the reason
+            if (payloadData.length >= 2) {
+                statusCode = Constants.StatusCode.fromInteger((((payloadData[0] & 0xFF) << 8) | (payloadData[1] & 0xFF)));
+
+                //@formatter:off
+                if(statusCode == Constants.StatusCode.INVALID_STATUS_CODE) throw new ProtocolErrorException(String.format("Received close frame with invalid status code %d", ((payloadData[0] & 0xFF) << 8) | (payloadData[1] & 0xFF)));
+                if(statusCode == Constants.StatusCode.EXPECTS_STATUS_CODE) throw new ProtocolErrorException("Received close frame with status code 1005");
+                if(statusCode == Constants.StatusCode.EXPECTS_STATUS_CODE_ABNORMALLY) throw new ProtocolErrorException("Received close frame with status code 1005");
+                if(statusCode == Constants.StatusCode.RESERVED) throw new ProtocolErrorException("Received close frame with status code 1005");
+                //@formatter:on
+
+                if(payloadData.length > 2) {
+                    closeReason = new String(Arrays.copyOfRange(payloadData, 2, payloadData.length), StandardCharsets.UTF_8);
+                }
+            }
+
+            System.out.printf("Received close connection message with status code %s (%s)%n", statusCode.name(), statusCode.value);
+            if(!closeReason.isEmpty()) System.out.println(closeReason);
+
+            //Send a close message back
+            sendMessage(new Message(Fragment.OpCode.CONNECTION_CLOSE, payloadData));
+        } else {
+            System.out.println("Closed connection!");
+        }
+
+        //Connection has been closed, so update the client's state
+        setState(State.CLOSED);
+    }
+
     void handleMessage(final Message message) {
         try {
             //If the message is a control message the client needs to handle it
@@ -173,32 +210,7 @@ public class Client {
 
                 switch (message.getMessageType()) {
                     case CONNECTION_CLOSE:
-                        //If the client is not closing already and it receives a connection_close message, send one back
-                        if (getState() != State.CLOSING) {
-                            //If there is payload data read it to determine the reason
-                            if (payloadData.length >= 2) {
-                                System.out.printf("Received close connection message with status code %s%n",
-                                                  (((payloadData[0] & 0xFF) << 8) | (payloadData[1] & 0xFF)));
-
-                                if (payloadData.length > 2) System.out.print("Close reason from other side: ");
-
-                                for (int i = 2; i < payloadData.length; i++) {
-                                    System.out.print((char) payloadData[i]);
-                                }
-
-                                if (payloadData.length > 2) System.out.print(System.lineSeparator());
-                            } else {
-                                System.out.println("Received close connection message without reason");
-                            }
-
-                            //Send a close message back
-                            sendMessage(new Message(Fragment.OpCode.CONNECTION_CLOSE, payloadData));
-                        } else {
-                            System.out.println("Closed connection!");
-                        }
-
-                        //Connection has been closed, so update the client's state
-                        setState(State.CLOSED);
+                       handleCloseMessage(message);
                         break;
                     case PING:
 
