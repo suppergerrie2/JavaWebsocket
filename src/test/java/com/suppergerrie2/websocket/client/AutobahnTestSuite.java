@@ -6,8 +6,6 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.security.NoSuchAlgorithmException;
-import java.util.concurrent.ExecutionException;
 
 public class AutobahnTestSuite {
 
@@ -17,7 +15,7 @@ public class AutobahnTestSuite {
     boolean running;
 
     @Test
-    public void runAutobahnTestSuite() throws IOException, InterruptedException, ExecutionException, NoSuchAlgorithmException {
+    public void runAutobahnTestSuite() throws IOException, InterruptedException {
         running = true;
 
         Client client = new Client(new URL(baseURL + "/getCaseCount"));
@@ -42,10 +40,11 @@ public class AutobahnTestSuite {
         for (int i = 0; i < caseCounts; i++) {
         System.out.println();
             doTestCase(i+1);
-
-            System.out.println();
-            updateReports();
         }
+
+        System.out.println();
+        updateReports();
+
         running = false;
     }
 
@@ -67,9 +66,7 @@ public class AutobahnTestSuite {
                 }
             });
 
-            client.registerCloseHandler((c) -> {
-                System.out.printf("Case %d done%n", currentCaseCount);
-            });
+            client.registerCloseHandler((c) -> System.out.printf("Case %d done%n", currentCaseCount));
 
             client.start();
             while (client.getState() == State.HANDSHAKE || client.isConnected()) Thread.sleep(10);
@@ -83,9 +80,7 @@ public class AutobahnTestSuite {
         try {
             System.out.println("updating reports");
             Client client = new Client(new URL(String.format("%s/updateReports?agent=%s", baseURL, agent)));
-            client.registerCloseHandler(c -> {
-                System.out.println("finished update reports");
-            });
+            client.registerCloseHandler(c -> System.out.println("finished update reports"));
             client.start();
 
             while (client.getState() != State.CLOSED) Thread.sleep(10);

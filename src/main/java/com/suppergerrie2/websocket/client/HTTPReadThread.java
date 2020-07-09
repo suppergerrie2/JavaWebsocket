@@ -28,7 +28,7 @@ public class HTTPReadThread extends Thread {
                 httpHeaderBuilder.append(line);
             } catch (IOException e) {
                 e.printStackTrace();
-                client.stop(Constants.StatusCode.UNEXPECTED_EXCEPTION);
+                client.stop(Constants.StatusCode.UNEXPECTED_EXCEPTION, true);
                 return;
             }
         }

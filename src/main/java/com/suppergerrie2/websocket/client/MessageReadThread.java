@@ -3,6 +3,7 @@ package com.suppergerrie2.websocket.client;
 import com.suppergerrie2.websocket.ExtendedInputStream;
 import com.suppergerrie2.websocket.ProtocolErrorException;
 import com.suppergerrie2.websocket.common.Constants;
+import com.suppergerrie2.websocket.common.Helpers;
 import com.suppergerrie2.websocket.common.messages.Fragment;
 import com.suppergerrie2.websocket.common.messages.Message;
 
@@ -38,11 +39,11 @@ public class MessageReadThread extends Thread {
                     fragment = new Fragment(inputStream);
                 } catch (IOException e) {
                     e.printStackTrace();
-                    client.stop(Constants.StatusCode.UNEXPECTED_EXCEPTION);
+                    client.stop(Constants.StatusCode.UNEXPECTED_EXCEPTION, true);
                     return;
                 } catch (ProtocolErrorException e) {
                     e.printStackTrace();
-                    client.stop(Constants.StatusCode.PROTOCOL_ERROR);
+                    client.stop(e.statusCode, true);
                     return;
                 }
 
@@ -56,6 +57,10 @@ public class MessageReadThread extends Thread {
                     currentMessage.addFragment(fragment);
                 }
 
+                if(currentMessage.getMessageType() == Fragment.OpCode.TEXT_FRAME && !Helpers.isValidUTF8(currentMessage.getPayloadData(), !fragment.fin)) {
+                    throw new ProtocolErrorException("Message contained invalid UTF-8", Constants.StatusCode.INCONSISTENT_DATA_TYPE);
+                }
+
                 if (fragment.fin) {
                     client.handleMessage(currentMessage);
                     currentMessage = null;
@@ -63,7 +68,7 @@ public class MessageReadThread extends Thread {
             }
         } catch (ProtocolErrorException e) {
             e.printStackTrace();
-            client.stop(Constants.StatusCode.PROTOCOL_ERROR);
+            client.stop(e.statusCode, true);
         }
     }
 }

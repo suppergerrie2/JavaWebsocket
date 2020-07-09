@@ -2,6 +2,8 @@ package com.suppergerrie2.websocket.common.messages;
 
 import com.suppergerrie2.websocket.ExtendedInputStream;
 import com.suppergerrie2.websocket.ProtocolErrorException;
+import com.suppergerrie2.websocket.common.Constants;
+import com.suppergerrie2.websocket.common.Helpers;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -48,8 +50,9 @@ public class Fragment {
 
         //TODO: Allow for extensions
         if (rsv1 || rsv2 || rsv3) {
-            throw new ProtocolErrorException(
-                    "A reserved bit was set which isn't allowed without extension. (RFC-6455 Section 5.2.)");
+            //@formatter:off
+            throw new ProtocolErrorException("A reserved bit was set which isn't allowed without extension. (RFC-6455 Section 5.2.)");
+            //@formatter:on
         }
 
         //Read the opcode from the last 4 bits
@@ -58,7 +61,9 @@ public class Fragment {
         this.opCode = OpCode.getOpcode(opCode);
 
         if (this.opCode == OpCode.RESERVED_CONTROL || this.opCode == OpCode.RESERVED_NON_CONTROL || this.opCode == OpCode.UNKNOWN) {
+            //@formatter:off
             throw new ProtocolErrorException(String.format("Invalid OpCode received (%s::%2$02X)", this.opCode.name(), opCode));
+            //@formatter:on
         }
 
         //Get the next byte, which contains the mask flag and the (first) payload length
@@ -103,6 +108,13 @@ public class Fragment {
         if (hasMask) {
             for (int i = 0; i < payloadData.length; i++) {
                 payloadData[i] = (byte) (payloadData[i] ^ mask[i % 4]);
+            }
+        }
+
+        if (this.opCode == OpCode.TEXT_FRAME) {
+            if (!Helpers.isValidUTF8(payloadData, !fin)) {
+                throw new ProtocolErrorException("Text frame contains non utf-8 data.",
+                                                 Constants.StatusCode.INCONSISTENT_DATA_TYPE);
             }
         }
     }

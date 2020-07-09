@@ -115,7 +115,7 @@ public class Client {
             new MessageReadThread(this, socket.getInputStream()).start();
         } catch (IOException e) {
             e.printStackTrace();
-            stop(Constants.StatusCode.UNEXPECTED_EXCEPTION);
+            stop(Constants.StatusCode.UNEXPECTED_EXCEPTION, true);
         }
 
         new HTTPReadThread(this, socket.getInputStream()).start();
@@ -177,7 +177,13 @@ public class Client {
                 //@formatter:on
 
                 if(payloadData.length > 2) {
-                    closeReason = new String(Arrays.copyOfRange(payloadData, 2, payloadData.length), StandardCharsets.UTF_8);
+                    byte[] reasonBytes = Arrays.copyOfRange(payloadData, 2, payloadData.length);
+
+                    if(!Helpers.isValidUTF8(reasonBytes, false)) {
+                        throw new ProtocolErrorException("Received non UTF-8 data in close reason", Constants.StatusCode.INCONSISTENT_DATA_TYPE);
+                    }
+
+                    closeReason = new String(reasonBytes, StandardCharsets.UTF_8);
                 }
             }
 
@@ -238,7 +244,7 @@ public class Client {
             }
         } catch (ProtocolErrorException e) {
             e.printStackTrace();
-            this.stop(Constants.StatusCode.PROTOCOL_ERROR);
+            this.stop(e.statusCode, true);
         }
     }
 
@@ -362,8 +368,8 @@ public class Client {
         stop(1000, false);
     }
 
-    public void stop(Constants.StatusCode statusCode) {
-        stop(statusCode.value, statusCode == Constants.StatusCode.PROTOCOL_ERROR);
+    public void stop(Constants.StatusCode statusCode, boolean forceStop) {
+        stop(statusCode.value, forceStop);
     }
 
     public void stop(int statusCode, boolean forceStop) {
