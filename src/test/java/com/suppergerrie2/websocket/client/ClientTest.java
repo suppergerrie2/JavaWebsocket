@@ -6,17 +6,17 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
-import java.net.URL;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
-import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
-import java.util.concurrent.ExecutionException;
 
+@SuppressWarnings("BusyWait")
 class ClientTest {
 
     boolean receivedMessage;
     @Test
-    void echoTextTest() throws IOException, InterruptedException, ExecutionException, NoSuchAlgorithmException {
+    void echoTextTest() throws IOException, InterruptedException, URISyntaxException {
         //Create the string to send
         StringBuilder s = new StringBuilder();
         s.append("START");
@@ -28,7 +28,7 @@ class ClientTest {
 
         System.out.println("Connecting...");
 
-        Client client = new Client(new URL("wss://echo.websocket.org/"));
+        Client client = new Client(new URI("wss://echo.websocket.org/"));
         receivedMessage = false;
 
         client.registerMessageHandler("", message -> {
@@ -69,7 +69,7 @@ class ClientTest {
     }
 
     @Test
-    void echoBinaryTest() throws IOException, InterruptedException, ExecutionException, NoSuchAlgorithmException {
+    void echoBinaryTest() throws IOException, InterruptedException, URISyntaxException {
         //Create the string to send
         final byte[] toSend = new byte[16384*4];
 
@@ -79,7 +79,7 @@ class ClientTest {
 
         System.out.println("Connecting...");
 
-        Client client = new Client(new URL("wss://echo.websocket.org/"));
+        Client client = new Client(new URI("wss://echo.websocket.org/"));
 
         receivedMessage = false;
         client.registerMessageHandler("", message -> {

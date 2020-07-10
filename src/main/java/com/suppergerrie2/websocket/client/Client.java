@@ -4,7 +4,6 @@ import com.suppergerrie2.websocket.ProtocolErrorException;
 import com.suppergerrie2.websocket.common.Constants;
 import com.suppergerrie2.websocket.common.Helpers;
 import com.suppergerrie2.websocket.common.State;
-import com.suppergerrie2.websocket.common.WebsocketURLStreamHandlerFactory;
 import com.suppergerrie2.websocket.common.messages.Fragment;
 import com.suppergerrie2.websocket.common.messages.Message;
 
@@ -13,29 +12,23 @@ import javax.net.ssl.SSLSocketFactory;
 import java.io.IOException;
 import java.net.ProtocolException;
 import java.net.Socket;
-import java.net.URL;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.function.Consumer;
 
 public class Client {
 
-    static {
-        WebsocketURLStreamHandlerFactory.initialize();
-    }
-
-    private final URL host;
+    private final URI host;
+    private final HashMap<String, List<Consumer<Message>>> messageHandlers = new HashMap<>();
+    private final List<Consumer<Client>> closeHandlers = new ArrayList<>();
     private Socket socket;
     private State state = State.CLOSED;
     private byte[] randomBytes;
-
-    private final HashMap<String, List<Consumer<Message>>> messageHandlers = new HashMap<>();
-    private final List<Consumer<Client>> closeHandlers = new ArrayList<>();
-
     private String activeProtocol;
 
-    public Client(URL host) throws ProtocolException {
-        if (!(host.getProtocol().equals("ws") || host.getProtocol().equals("wss"))) {
+    public Client(URI host) throws ProtocolException {
+        if (!(host.getScheme().equals("ws") || host.getScheme().equals("wss"))) {
             throw new ProtocolException("Only supports ws and wss protocols");
         }
 
@@ -57,18 +50,15 @@ public class Client {
     public void start() throws IOException {
 
         int port = host.getPort();
-        if (port == -1) {
-            port = host.getDefaultPort();
-        }
 
         //If we use secure websocket create a SSL socket
-        if (host.getProtocol().equals("wss")) {
+        if (host.getScheme().equals("wss")) {
             SSLSocketFactory socketFactory = (SSLSocketFactory) SSLSocketFactory.getDefault();
-            SSLSocket sslSocket = (SSLSocket) socketFactory.createSocket(host.getHost(), port);
+            SSLSocket sslSocket = (SSLSocket) socketFactory.createSocket(host.getHost(), port == -1 ? 443 : port);
             sslSocket.startHandshake();
             socket = sslSocket;
         } else {
-            socket = new Socket(host.getHost(), port);
+            socket = new Socket(host.getHost(), port == -1 ? 80 : port);
         }
 
         startReading();
@@ -77,12 +67,17 @@ public class Client {
 
     private void doInitializeWebsocketUpgrade() throws IOException {
         setState(State.HANDSHAKE);
+
+        int port = host.getPort();
+        if(port == -1) {
+            port = host.getScheme().equals("ws") ? 80 : 433;
+        }
+
         String[] headers = new String[]{
-                String.format("GET %s HTTP/1.1", host.toExternalForm()),
+                String.format("GET %s HTTP/1.1", host.toASCIIString()),
                 "Connection: Upgrade",
                 String.format("Sec-WebSocket-Key: %s", getNonce()),
-                String.format("Host: %s:%s", host.getHost(),
-                              host.getPort() == -1 ? host.getDefaultPort() : host.getPort()),
+                String.format("Host: %s:%s", host.getHost(), port),
                 "Upgrade: websocket",
                 "Sec-WebSocket-Version: 13",
                 String.format("Sec-WebSocket-Protocol: %s", String.join(",", messageHandlers.keySet()))
@@ -167,7 +162,8 @@ public class Client {
 
             //If there is payload data read it to determine the reason
             if (payloadData.length >= 2) {
-                statusCode = Constants.StatusCode.fromInteger((((payloadData[0] & 0xFF) << 8) | (payloadData[1] & 0xFF)));
+                statusCode = Constants.StatusCode
+                        .fromInteger((((payloadData[0] & 0xFF) << 8) | (payloadData[1] & 0xFF)));
 
                 //@formatter:off
                 if(statusCode == Constants.StatusCode.INVALID_STATUS_CODE) throw new ProtocolErrorException(String.format("Received close frame with invalid status code %d", ((payloadData[0] & 0xFF) << 8) | (payloadData[1] & 0xFF)));
@@ -176,19 +172,21 @@ public class Client {
                 if(statusCode == Constants.StatusCode.RESERVED) throw new ProtocolErrorException("Received close frame with status code " + statusCode);
                 //@formatter:on
 
-                if(payloadData.length > 2) {
+                if (payloadData.length > 2) {
                     byte[] reasonBytes = Arrays.copyOfRange(payloadData, 2, payloadData.length);
 
-                    if(!Helpers.isValidUTF8(reasonBytes, false)) {
-                        throw new ProtocolErrorException("Received non UTF-8 data in close reason", Constants.StatusCode.INCONSISTENT_DATA_TYPE);
+                    if (!Helpers.isValidUTF8(reasonBytes, false)) {
+                        throw new ProtocolErrorException("Received non UTF-8 data in close reason",
+                                                         Constants.StatusCode.INCONSISTENT_DATA_TYPE);
                     }
 
                     closeReason = new String(reasonBytes, StandardCharsets.UTF_8);
                 }
             }
 
-            System.out.printf("Received close connection message with status code %s (%s)%n", statusCode.name(), statusCode.value);
-            if(!closeReason.isEmpty()) System.out.println(closeReason);
+            System.out.printf("Received close connection message with status code %s (%s)%n", statusCode.name(),
+                              statusCode.value);
+            if (!closeReason.isEmpty()) System.out.println(closeReason);
 
             //Send a close message back
             sendMessage(new Message(Fragment.OpCode.CONNECTION_CLOSE, payloadData));
@@ -216,7 +214,7 @@ public class Client {
 
                 switch (message.getMessageType()) {
                     case CONNECTION_CLOSE:
-                       handleCloseMessage(message);
+                        handleCloseMessage(message);
                         break;
                     case PING:
 
@@ -309,7 +307,8 @@ public class Client {
 
             //Status code should be 101
             if (statusCode != 101) {
-                throw new ProtocolErrorException(String.format("status could should be 101 but is %d%n%s", statusCode, headerString));
+                throw new ProtocolErrorException(
+                        String.format("status could should be 101 but is %d%n%s", statusCode, headerString));
             }
 
             //Collect headers and put them in a map TODO: some headers are allowed to occur more than once and should be merged into one
@@ -337,9 +336,10 @@ public class Client {
 
             activeProtocol = headerFields.getOrDefault("Sec-WebSocket-Protocol", "");
 
-            if(!activeProtocol.isEmpty() && !messageHandlers.containsKey(activeProtocol)) {
+            if (!activeProtocol.isEmpty() && !messageHandlers.containsKey(activeProtocol)) {
                 throw new ProtocolErrorException(String.format(
-                        "Server requested protocol %s but client did not request that. (Client protocols: %s)", activeProtocol, String.join(",", messageHandlers.keySet())));
+                        "Server requested protocol %s but client did not request that. (Client protocols: %s)",
+                        activeProtocol, String.join(",", messageHandlers.keySet())));
             }
 
             //handshake is done, state is open now

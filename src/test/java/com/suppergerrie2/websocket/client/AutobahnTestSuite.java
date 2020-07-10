@@ -4,9 +4,11 @@ import com.suppergerrie2.websocket.common.State;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
-import java.net.URL;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 
+@SuppressWarnings("BusyWait")
 public class AutobahnTestSuite {
 
     final String agent = "java-websocket-client-1";
@@ -15,10 +17,10 @@ public class AutobahnTestSuite {
     boolean running;
 
     @Test
-    public void runAutobahnTestSuite() throws IOException, InterruptedException {
+    public void runAutobahnTestSuite() throws IOException, InterruptedException, URISyntaxException {
         running = true;
 
-        Client client = new Client(new URL(baseURL + "/getCaseCount"));
+        Client client = new Client(new URI(baseURL + "/getCaseCount"));
 
         client.registerMessageHandler("", (message -> {
             String data = new String(message.getPayloadData(), StandardCharsets.UTF_8);
@@ -48,11 +50,11 @@ public class AutobahnTestSuite {
         running = false;
     }
 
-    void doTestCase(int currentCaseCount) {
+    void doTestCase(int currentCaseCount)  {
         try {
             System.out.println("Starting test case " + currentCaseCount);
             Client client = new Client(
-                    new URL(String.format("%s/runCase?case=%d&agent=%s", baseURL, currentCaseCount, agent)));
+                    new URI(String.format("%s/runCase?case=%d&agent=%s", baseURL, currentCaseCount, agent)));
 
             client.registerMessageHandler("", message -> {
                 switch (message.getMessageType()) {
@@ -71,7 +73,7 @@ public class AutobahnTestSuite {
             client.start();
             while (client.getState() == State.HANDSHAKE || client.isConnected()) Thread.sleep(10);
 
-        } catch (IOException | InterruptedException e) {
+        } catch (IOException | InterruptedException | URISyntaxException e) {
             e.printStackTrace();
         }
     }
@@ -79,12 +81,12 @@ public class AutobahnTestSuite {
     private void updateReports() {
         try {
             System.out.println("updating reports");
-            Client client = new Client(new URL(String.format("%s/updateReports?agent=%s", baseURL, agent)));
+            Client client = new Client(new URI(String.format("%s/updateReports?agent=%s", baseURL, agent)));
             client.registerCloseHandler(c -> System.out.println("finished update reports"));
             client.start();
 
             while (client.getState() != State.CLOSED) Thread.sleep(10);
-        } catch (IOException | InterruptedException e) {
+        } catch (IOException | InterruptedException | URISyntaxException e) {
             e.printStackTrace();
         }
     }
