@@ -28,9 +28,6 @@ public class WebsocketURLStreamHandler extends URLStreamHandler {
         result.append(u.getProtocol());
         result.append("://");
         result.append(u.getAuthority());
-        if (u.getPort() != -1) {
-            result.append(":").append(u.getPort());
-        }
         if (u.getPath() != null) {
             result.append(u.getPath());
         }

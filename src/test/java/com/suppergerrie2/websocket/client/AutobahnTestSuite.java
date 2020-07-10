@@ -38,8 +38,8 @@ public class AutobahnTestSuite {
 
     void startTesting() {
         for (int i = 0; i < caseCounts; i++) {
-        System.out.println();
-            doTestCase(i+1);
+            System.out.println();
+            doTestCase(i + 1);
         }
 
         System.out.println();

@@ -78,7 +78,7 @@ public class Client {
     private void doInitializeWebsocketUpgrade() throws IOException {
         setState(State.HANDSHAKE);
         String[] headers = new String[]{
-                String.format("GET %s HTTP/1.1", host.toExternalForm()), //TODO: Fix port being added twice.
+                String.format("GET %s HTTP/1.1", host.toExternalForm()),
                 "Connection: Upgrade",
                 String.format("Sec-WebSocket-Key: %s", getNonce()),
                 String.format("Host: %s:%s", host.getHost(),
@@ -292,7 +292,7 @@ public class Client {
         }
     }
 
-    void parseHandshakeHeader(String headerString) {
+    void parseHandshakeHeader(String headerString) throws ProtocolErrorException {
         String[] header = headerString.split("\r\n");
         String[] statusLine = header[0].split(" ");
 
@@ -305,12 +305,13 @@ public class Client {
                 statusCode = Integer.parseInt(statusLine[1]);
             } catch (NumberFormatException e) {
                 //If it is not a number throw an exception
-                throw new IllegalArgumentException("First line of response should have a http status code!");
+                throw new ProtocolErrorException(
+                        String.format("First line of response should have a http status code! %n%s", headerString));
             }
 
             //Status code should be 101
             if (statusCode != 101) {
-                throw new IllegalStateException(String.format("status could should be 101 but is %d", statusCode));
+                throw new ProtocolErrorException(String.format("status could should be 101 but is %d%n%s", statusCode, headerString));
             }
 
             //Collect headers and put them in a map TODO: some headers are allowed to occur more than once and should be merged into one
@@ -333,7 +334,7 @@ public class Client {
                 System.out.printf("sec-websocket-accept %s expected %s%n",
                                   headerFields.getOrDefault("sec-websocket-accept", "").toLowerCase(),
                                   Helpers.getSecWebsocket(getNonce()));
-                throw new IllegalStateException("Header had an invalid value");
+                throw new ProtocolErrorException("Header had an invalid value");
             }
 
             String protocols = headerFields.getOrDefault("Sec-WebSocket-Protocol", "");
@@ -343,7 +344,7 @@ public class Client {
                 if (protocol.length() == 0) continue;
 
                 if (!messageHandlers.containsKey(protocol)) {
-                    throw new IllegalStateException(
+                    throw new ProtocolErrorException(
                             String.format("Server requested protocol %s which client cannot handle", protocol));
                 }
             }
@@ -353,7 +354,7 @@ public class Client {
             //handshake is done, state is open now
             setState(State.OPEN);
         } else {
-            throw new IllegalStateException(
+            throw new ProtocolErrorException(
                     String.format("Should have received a HTTP response but it is %s", headerString));
         }
     }
@@ -397,6 +398,13 @@ public class Client {
                 setState(State.CLOSED);
             }
         } else {
+            try {
+                socket.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+            setState(State.CLOSED);
             throw new IllegalStateException("Cannot stop client that hasn't started yet");
         }
     }
