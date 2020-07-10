@@ -39,7 +39,7 @@ public class MessageReadThread extends Thread {
                     fragment = new Fragment(inputStream);
                 } catch (IOException e) {
                     e.printStackTrace();
-                    client.stop(Constants.StatusCode.UNEXPECTED_EXCEPTION, true);
+                    client.stop(Constants.StatusCode.INTERNAL_ERROR, true);
                     return;
                 } catch (ProtocolErrorException e) {
                     e.printStackTrace();

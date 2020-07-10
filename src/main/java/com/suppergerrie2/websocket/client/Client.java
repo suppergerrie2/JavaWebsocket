@@ -29,10 +29,10 @@ public class Client {
     private State state = State.CLOSED;
     private byte[] randomBytes;
 
-    private HashMap<String, List<Consumer<Message>>> messageHandlers = new HashMap<>();
-    private List<Consumer<Client>> closeHandlers = new ArrayList<>();
+    private final HashMap<String, List<Consumer<Message>>> messageHandlers = new HashMap<>();
+    private final List<Consumer<Client>> closeHandlers = new ArrayList<>();
 
-    private String[] activeProtocols;
+    private String activeProtocol;
 
     public Client(URL host) throws ProtocolException {
         if (!(host.getProtocol().equals("ws") || host.getProtocol().equals("wss"))) {
@@ -115,7 +115,7 @@ public class Client {
             new MessageReadThread(this, socket.getInputStream()).start();
         } catch (IOException e) {
             e.printStackTrace();
-            stop(Constants.StatusCode.UNEXPECTED_EXCEPTION, true);
+            stop(Constants.StatusCode.INTERNAL_ERROR, true);
         }
 
         new HTTPReadThread(this, socket.getInputStream()).start();
@@ -171,9 +171,9 @@ public class Client {
 
                 //@formatter:off
                 if(statusCode == Constants.StatusCode.INVALID_STATUS_CODE) throw new ProtocolErrorException(String.format("Received close frame with invalid status code %d", ((payloadData[0] & 0xFF) << 8) | (payloadData[1] & 0xFF)));
-                if(statusCode == Constants.StatusCode.EXPECTS_STATUS_CODE) throw new ProtocolErrorException("Received close frame with status code 1005");
-                if(statusCode == Constants.StatusCode.EXPECTS_STATUS_CODE_ABNORMALLY) throw new ProtocolErrorException("Received close frame with status code 1005");
-                if(statusCode == Constants.StatusCode.RESERVED) throw new ProtocolErrorException("Received close frame with status code 1005");
+                if(statusCode == Constants.StatusCode.EXPECTS_STATUS_CODE) throw new ProtocolErrorException("Received close frame with status code " + statusCode);
+                if(statusCode == Constants.StatusCode.ABNORMAL_CLOSURE) throw new ProtocolErrorException("Received close frame with status code " + statusCode);
+                if(statusCode == Constants.StatusCode.RESERVED) throw new ProtocolErrorException("Received close frame with status code " + statusCode);
                 //@formatter:on
 
                 if(payloadData.length > 2) {
@@ -235,11 +235,9 @@ public class Client {
                 }
 
             } else {
-                for (String protocol : activeProtocols) {
-                    //Pass it to the user
-                    for (Consumer<Message> h : messageHandlers.get(protocol)) {
-                        h.accept(message);
-                    }
+                //Pass it to the user
+                for (Consumer<Message> h : messageHandlers.get(activeProtocol)) {
+                    h.accept(message);
                 }
             }
         } catch (ProtocolErrorException e) {
@@ -337,19 +335,12 @@ public class Client {
                 throw new ProtocolErrorException("Header had an invalid value");
             }
 
-            String protocols = headerFields.getOrDefault("Sec-WebSocket-Protocol", "");
-            String[] protocolArray = Arrays.stream(protocols.split(",")).map(String::trim).toArray(String[]::new);
+            activeProtocol = headerFields.getOrDefault("Sec-WebSocket-Protocol", "");
 
-            for (String protocol : protocolArray) {
-                if (protocol.length() == 0) continue;
-
-                if (!messageHandlers.containsKey(protocol)) {
-                    throw new ProtocolErrorException(
-                            String.format("Server requested protocol %s which client cannot handle", protocol));
-                }
+            if(!activeProtocol.isEmpty() && !messageHandlers.containsKey(activeProtocol)) {
+                throw new ProtocolErrorException(String.format(
+                        "Server requested protocol %s but client did not request that. (Client protocols: %s)", activeProtocol, String.join(",", messageHandlers.keySet())));
             }
-
-            activeProtocols = protocolArray;
 
             //handshake is done, state is open now
             setState(State.OPEN);
